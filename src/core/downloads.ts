@@ -1,10 +1,11 @@
 import { reactive } from 'vue'
 import { Capacitor } from '@capacitor/core'
-import { Directory, Filesystem } from '@capacitor/filesystem'
 import { resolveTrackSource } from './playback/source'
 import { settingsState } from './settings'
 import { qualityLabel } from './quality'
+import { linesToLrc } from './lyrics/local'
 import type { Track } from './track'
+import type { LyricLine } from './playback/player'
 import { Downloader, type DownloadProgressEvent } from './native/plugins'
 
 type DownloadStatus = 'queued' | 'downloading' | 'completed' | 'failed' | 'cancelled'
@@ -18,7 +19,15 @@ export interface DownloadTask {
   received: number
   total: number
   fileName: string
+  /** Absolute path in the app-private folder (empty for SAF downloads). */
   path: string
+  /** SAF document URI when the file lives in a user-picked folder. */
+  uri: string
+  /** SAF tree URI used for the download; empty for the app-private folder. */
+  treeUri: string
+  /** Sidecar file names saved next to the audio file. */
+  lyricsFile: string
+  coverFile: string
   size: number
   error: string
   createdAt: number
@@ -77,6 +86,119 @@ export function localUrlFor(track: Track): string {
   if (task.blobUrl) return task.blobUrl
   if (!task.path) return ''
   return Capacitor.convertFileSrc(task.path)
+}
+
+/** Folder shown in settings and the downloads page. */
+export function downloadFolderLabel(): string {
+  if (!settingsState.downloadDirectoryUri) return '应用专属目录'
+  return settingsState.downloadDirectoryLabel || '已选目录'
+}
+
+/** Opens the system folder picker; `uri` is empty when the user cancels. */
+export async function chooseDownloadFolder(): Promise<{ uri: string; label: string }> {
+  if (!Capacitor.isNativePlatform()) return { uri: '', label: '' }
+  const result = await Downloader.chooseDirectory()
+  return { uri: result.uri, label: result.label }
+}
+
+/** Forgets the custom folder; files already downloaded stay where they are. */
+export async function resetDownloadFolder(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  await Downloader.clearDirectory()
+}
+
+/**
+ * Playable URL for a downloaded track. SAF documents cannot be loaded by the
+ * audio element directly, so they are proxied through the native loopback
+ * server; app-private files keep using the cheap convertFileSrc path.
+ */
+export async function localPlaybackUrl(track: Track): Promise<string> {
+  const task = completedTaskFor(track)
+  if (!task) return ''
+  if (task.blobUrl) return task.blobUrl
+  if (task.treeUri && task.fileName && Capacitor.isNativePlatform()) {
+    try {
+      const { url } = await Downloader.localUrl({ fileName: task.fileName, treeUri: task.treeUri })
+      return url
+    } catch {
+      return ''
+    }
+  }
+  return localUrlFor(track)
+}
+
+/** Text of the `.lrc` saved next to the download, empty when there is none. */
+export async function localLyricsText(track: Track): Promise<string> {
+  const task = completedTaskFor(track)
+  if (!task?.lyricsFile || !Capacitor.isNativePlatform()) return ''
+  try {
+    const { text } = await Downloader.readText({
+      fileName: task.lyricsFile,
+      treeUri: task.treeUri || ''
+    })
+    return text
+  } catch {
+    return ''
+  }
+}
+
+type LyricFetcher = (track: Track) => Promise<LyricLine[]>
+
+let lyricFetcher: LyricFetcher | null = null
+
+/**
+ * main.ts injects the player's lyric fetcher here; downloads never imports the
+ * player module so the two stay free of an import cycle.
+ */
+export function registerSidecarSources(sources: { lyrics?: LyricFetcher }): void {
+  lyricFetcher = sources.lyrics ?? null
+}
+
+function sidecarBase(fileName: string): string {
+  return fileName.replace(/\.[^.\\/]+$/, '')
+}
+
+function coverUrlFor(track: Track): string {
+  const url = track.artwork || ''
+  return /^https?:\/\//i.test(url) ? url : ''
+}
+
+/** Writes the matching .lrc / cover files next to a finished download. */
+async function writeSidecars(task: DownloadTask): Promise<void> {
+  if (!task.fileName || !Capacitor.isNativePlatform()) return
+  const base = sidecarBase(task.fileName)
+  const treeUri = task.treeUri || ''
+  if (settingsState.downloadLyrics && lyricFetcher) {
+    try {
+      const lines = await lyricFetcher(task.track)
+      if (lines.length) {
+        const text = linesToLrc(lines, {
+          title: task.track.title,
+          artist: task.track.artist,
+          album: task.track.album
+        })
+        const written = await Downloader.writeText({ fileName: `${base}.lrc`, text, treeUri })
+        task.lyricsFile = written.fileName
+        persist()
+      }
+    } catch {}
+  }
+  if (settingsState.downloadCover) {
+    const url = coverUrlFor(task.track)
+    if (url) {
+      try {
+        const result = await Downloader.download({
+          id: `${task.id}-cover`,
+          url,
+          fileName: `${base}.jpg`,
+          treeUri,
+          overwrite: true
+        })
+        task.coverFile = result.fileName
+        persist()
+      } catch {}
+    }
+  }
 }
 
 function sanitizeFileName(value: string): string {
@@ -144,6 +266,10 @@ export async function initDownloads(): Promise<void> {
       if (Array.isArray(saved)) {
         downloadState.tasks = saved.map((task: DownloadTask) => ({
           ...task,
+          uri: task.uri ?? '',
+          treeUri: task.treeUri ?? '',
+          lyricsFile: task.lyricsFile ?? '',
+          coverFile: task.coverFile ?? '',
           progress: task.status === 'completed' ? 1 : 0,
           received: task.received ?? 0,
           total: task.total ?? 0
@@ -179,14 +305,16 @@ async function verifyFiles(): Promise<void> {
   for (const task of downloadState.tasks) {
     if (task.status !== 'completed' || !task.fileName) continue
     try {
-      await Filesystem.stat({
-        path: 'Music/' + task.fileName,
-        directory: Directory.External
+      const probe = await Downloader.exists({
+        fileName: task.fileName,
+        treeUri: task.treeUri || ''
       })
+      if (!probe.exists) throw new Error('missing')
     } catch {
       task.status = 'failed'
       task.error = '文件已被删除'
       task.path = ''
+      task.uri = ''
       task.progress = 0
     }
   }
@@ -242,21 +370,26 @@ async function runTask(task: DownloadTask): Promise<void> {
       task.total = blob.size
       return
     }
+    const treeUri = settingsState.downloadDirectoryUri || ''
     const fileName = buildFileName(task.track, source.url, task.quality)
     task.fileName = fileName
     const result = await Downloader.download({
       id: task.id,
       url: source.url,
       fileName,
-      headers: source.headers
+      headers: source.headers,
+      treeUri
     })
     task.fileName = result.fileName
     task.path = result.path
+    task.uri = result.uri ?? ''
+    task.treeUri = treeUri
     task.size = result.size
     task.received = result.size
     task.total = result.size
     task.progress = 1
     task.status = 'completed'
+    void writeSidecars(task)
   } catch (error: any) {
     if ((task.status as DownloadStatus) === 'cancelled') return
     task.status = 'failed'
@@ -296,6 +429,10 @@ export function downloadTrack(
     total: 0,
     fileName: '',
     path: '',
+    uri: '',
+    treeUri: '',
+    lyricsFile: '',
+    coverFile: '',
     size: 0,
     error: '',
     createdAt: Date.now()
@@ -353,10 +490,13 @@ export async function removeTask(id: string, deleteFile = true): Promise<void> {
   if (index < 0) return
   const [task] = downloadState.tasks.splice(index, 1)
   if (task.blobUrl) URL.revokeObjectURL(task.blobUrl)
-  if (deleteFile && task.fileName && Capacitor.isNativePlatform()) {
-    try {
-      await Downloader.delete({ fileName: task.fileName })
-    } catch {}
+  if (deleteFile && Capacitor.isNativePlatform()) {
+    for (const name of [task.fileName, task.lyricsFile, task.coverFile]) {
+      if (!name) continue
+      try {
+        await Downloader.delete({ fileName: name, treeUri: task.treeUri || '' })
+      } catch {}
+    }
   }
   persist()
 }

@@ -26,6 +26,10 @@ restoreSettings()
 installLogCapture()
 applyVerboseLogs()
 
+// Lyrics for the .lrc sidecar files come from the player, which already knows
+// how to ask plugins and the cloud sources; injecting it here avoids a cycle.
+downloads.registerSidecarSources({ lyrics: playback.fetchLyricLines })
+
 if (import.meta.env.DEV) {
   ;(window as any).__ceruDebug = {
     ...pluginManager,

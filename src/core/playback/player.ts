@@ -19,7 +19,8 @@ import { toTrack, type Track } from '../track'
 import { matchCloudLyrics } from '../lyrics/cloud'
 import { normalizeTimedWords, type TimedLyricWord } from '../lyrics/timeline'
 import { playableUrl, providerForTrack } from './source'
-import { localUrlFor } from '../downloads'
+import { localLyricsText, localPlaybackUrl } from '../downloads'
+import { parseLrcText } from '../lyrics/local'
 import { logEvent } from '../logs'
 
 export type { Track } from '../track'
@@ -403,7 +404,7 @@ function absoluteArtwork(url: string): string {
 }
 
 async function resolvePlaybackUrl(track: Track): Promise<string> {
-  const local = localUrlFor(track)
+  const local = await localPlaybackUrl(track)
   if (local) {
     playerState.resolvedQuality = 'local'
     return local
@@ -936,6 +937,25 @@ function normalizePluginLyrics(document: any): LyricLine[] {
   })
 }
 
+/** Fetches lyrics for a track without touching player state. */
+export async function fetchLyricLines(track: Track): Promise<LyricLine[]> {
+  const provider = providerForTrack(track)
+  if (provider) {
+    try {
+      const document = await invokeProvider(provider, 'tracks.lyrics', [track.ref])
+      const lines = normalizePluginLyrics(document)
+      if (lines.length) return lines
+    } catch {
+      // Fall through to the cloud lyric sources.
+    }
+  }
+  if (settingsState.cloudLyrics) {
+    const cloud = await matchCloudLyrics(track)
+    if (cloud?.lines.length) return cloud.lines
+  }
+  return []
+}
+
 async function loadLyrics(track: Track): Promise<void> {
   const provider = providerForTrack(track)
   playerState.lyricsLoading = true
@@ -943,6 +963,22 @@ async function loadLyrics(track: Track): Promise<void> {
   playerState.lyricSource = ''
   syncBackgroundLyrics(track, [])
   try {
+    const sidecar = await localLyricsText(track)
+    if (currentTrack()?.id !== track.id) return
+    const savedLines = sidecar ? parseLrcText(sidecar) : []
+    if (savedLines.length) {
+      playerState.lyrics = savedLines
+      playerState.lyricSource = '本地文件'
+      logEvent(
+        'info',
+        'LYRIC',
+        `歌词已加载：${savedLines.length} 行`,
+        'source=local（下载目录中的 .lrc 文件）'
+      )
+      syncBackgroundLyrics(track, playerState.lyrics)
+      updateActiveLyric()
+      return
+    }
     if (provider) {
       try {
         const document = await invokeProvider(provider, 'tracks.lyrics', [track.ref])

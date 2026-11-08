@@ -10,8 +10,17 @@ export interface DownloadProgressEvent {
 interface DownloadResult {
   id: string
   path: string
+  /** SAF document URI when the download went to a user-picked folder. */
+  uri?: string
   fileName: string
   size: number
+}
+
+export interface DownloadDirectory {
+  /** Empty when downloads use the app-private folder. */
+  uri: string
+  label: string
+  isDefault: boolean
 }
 
 export interface DownloaderPlugin {
@@ -20,9 +29,25 @@ export interface DownloaderPlugin {
     url: string
     fileName: string
     headers?: Record<string, string>
+    /** SAF tree URI; omit to write into the app-private Music folder. */
+    treeUri?: string
+    /** Replace an existing file instead of adding a numbered copy. */
+    overwrite?: boolean
   }): Promise<DownloadResult>
   cancel(options: { id: string }): Promise<void>
-  delete(options: { fileName: string }): Promise<void>
+  delete(options: { fileName: string; treeUri?: string }): Promise<void>
+  exists(options: { fileName: string; treeUri?: string }): Promise<{ exists: boolean; size: number }>
+  readText(options: { fileName: string; treeUri?: string }): Promise<{ text: string }>
+  writeText(options: {
+    fileName: string
+    text: string
+    treeUri?: string
+  }): Promise<{ fileName: string; path: string; uri: string; size: number }>
+  /** Loopback URL for files the WebView cannot read directly (content://). */
+  localUrl(options: { fileName: string; treeUri?: string }): Promise<{ url: string; size: number }>
+  chooseDirectory(): Promise<DownloadDirectory>
+  getDirectory(): Promise<DownloadDirectory>
+  clearDirectory(): Promise<DownloadDirectory>
   addListener(
     event: 'progress',
     listener: (event: DownloadProgressEvent) => void

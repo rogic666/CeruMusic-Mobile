@@ -43,6 +43,14 @@ export interface AppSettings {
   downloadQuality: string
   /** How many downloads run at the same time (1-3). */
   downloadConcurrency: number
+  /** SAF tree URI for the download folder; empty means the app-private folder. */
+  downloadDirectoryUri: string
+  /** Human readable name of the chosen folder, cached for the settings row. */
+  downloadDirectoryLabel: string
+  /** Save a matching .lrc file next to each downloaded song. */
+  downloadLyrics: boolean
+  /** Save the cover art next to each downloaded song. */
+  downloadCover: boolean
   version?: number
 }
 
@@ -71,6 +79,10 @@ export const settingsState = reactive<AppSettings>({
   pluginAutoUpdate: true,
   downloadQuality: '',
   downloadConcurrency: 2,
+  downloadDirectoryUri: '',
+  downloadDirectoryLabel: '',
+  downloadLyrics: true,
+  downloadCover: true,
   version: 2
 })
 

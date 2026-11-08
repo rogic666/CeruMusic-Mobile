@@ -8,7 +8,13 @@ import { clearQueue, playerState, setMode, setQuality } from '@/core/playback/pl
 import { notify, pluginState } from '@/core/plugin/manager'
 import { availableQualities, qualityDescription, qualityLabel } from '@/core/quality'
 import { authState, displayName, login, logout } from '@/core/auth'
-import { downloadSummary, formatDownloadTemplate } from '@/core/downloads'
+import {
+  chooseDownloadFolder,
+  downloadFolderLabel,
+  downloadSummary,
+  formatDownloadTemplate,
+  resetDownloadFolder
+} from '@/core/downloads'
 import { libraryState } from '@/core/library'
 import { updateState } from '@/core/updater'
 import type { Track } from '@/core/track'
@@ -92,6 +98,9 @@ const ROW_TERMS: Record<string, string> = {
   'download:quality': '下载音质 音质 下载',
   'download:template': '下载文件名 文件名 模板 命名',
   'download:concurrency': '同时下载数量 并发 数量 下载',
+  'download:folder': '下载位置 目录 文件夹 路径 存储卡 自定义',
+  'download:lyrics': '下载歌词 歌词 lrc 保存',
+  'download:cover': '下载封面 封面 专辑图 图片',
   'data:plugins': '音源插件 插件 音源',
   'data:cloud': '云端歌单 歌单 同步 云',
   'data:downloads': '下载管理 下载 离线',
@@ -211,6 +220,29 @@ const lyricOffsetLabel = computed(
     `${settingsState.lyricOffsetMs >= 0 ? '+' : ''}${(settingsState.lyricOffsetMs / 1000).toFixed(1)} 秒`
 )
 const concurrencyLabel = computed(() => `${settingsState.downloadConcurrency} 个`)
+
+async function pickDownloadFolder(): Promise<void> {
+  try {
+    const picked = await chooseDownloadFolder()
+    if (!picked.uri) return
+    updateSettings({
+      downloadDirectoryUri: picked.uri,
+      downloadDirectoryLabel: picked.label
+    })
+    notify('下载位置已更新，新下载的歌曲会保存到该目录')
+  } catch (error: any) {
+    const message = String(error?.message ?? '')
+    if (!message.includes('取消')) notify(`无法打开目录选择器：${message}`)
+  }
+}
+
+async function useDefaultFolder(): Promise<void> {
+  try {
+    await resetDownloadFolder()
+  } catch {}
+  updateSettings({ downloadDirectoryUri: '', downloadDirectoryLabel: '' })
+  notify('已恢复为应用专属目录')
+}
 const runningPlugins = computed(() => pluginState.plugins.filter((plugin) => plugin.running).length)
 
 /* ---------- 选择器 ---------- */
@@ -863,6 +895,79 @@ async function resetSettings(): Promise<void> {
             </div>
             <span class="val">{{ concurrencyLabel }}</span>
             <Icon name="chevron-down" :size="13" />
+          </div>
+
+          <div
+            v-if="show('download:folder')"
+            class="settingrow pickrow"
+            role="button"
+            tabindex="0"
+            @click="pickDownloadFolder"
+            @keydown.enter.prevent="pickDownloadFolder"
+            @keydown.space.prevent="pickDownloadFolder"
+          >
+            <span class="ico"><Icon name="folder" :size="15" /></span>
+            <div class="body">
+              <div class="lab">下载位置</div>
+              <div class="sub">
+                {{
+                  settingsState.downloadDirectoryUri
+                    ? '自定义目录 · 卸载应用不会删除其中的歌曲'
+                    : '应用专属目录 · 卸载应用会一并删除'
+                }}
+              </div>
+            </div>
+            <span class="val">{{ downloadFolderLabel() }}</span>
+            <Icon name="chevron" :size="14" />
+          </div>
+
+          <div
+            v-if="show('download:folder') && settingsState.downloadDirectoryUri"
+            class="settingrow pickrow"
+            role="button"
+            tabindex="0"
+            @click="useDefaultFolder"
+            @keydown.enter.prevent="useDefaultFolder"
+            @keydown.space.prevent="useDefaultFolder"
+          >
+            <span class="ico"><Icon name="refresh" :size="15" /></span>
+            <div class="body">
+              <div class="lab">恢复默认目录</div>
+              <div class="sub">已下载的文件不会被移动或删除</div>
+            </div>
+            <Icon name="chevron" :size="14" />
+          </div>
+
+          <div v-if="show('download:lyrics')" class="settingrow">
+            <span class="ico"><Icon name="lyrics" :size="15" /></span>
+            <div class="body">
+              <div class="lab">保存歌词</div>
+              <div class="sub">下载完成后在歌曲旁写入同名 .lrc 文件</div>
+            </div>
+            <button
+              class="switch"
+              :class="{ on: settingsState.downloadLyrics }"
+              role="switch"
+              :aria-checked="settingsState.downloadLyrics"
+              aria-label="保存歌词"
+              @click="updateSettings({ downloadLyrics: !settingsState.downloadLyrics })"
+            />
+          </div>
+
+          <div v-if="show('download:cover')" class="settingrow">
+            <span class="ico"><Icon name="music" :size="15" /></span>
+            <div class="body">
+              <div class="lab">保存封面</div>
+              <div class="sub">同时下载专辑封面，保存为同名 .jpg</div>
+            </div>
+            <button
+              class="switch"
+              :class="{ on: settingsState.downloadCover }"
+              role="switch"
+              :aria-checked="settingsState.downloadCover"
+              aria-label="保存封面"
+              @click="updateSettings({ downloadCover: !settingsState.downloadCover })"
+            />
           </div>
         </div>
       </section>

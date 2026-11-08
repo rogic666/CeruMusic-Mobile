@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.webkit.WebSettings;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -33,6 +34,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DownloaderPlugin.class);
         registerPlugin(ExternalPlugin.class);
         super.onCreate(savedInstanceState);
+
+        // Downloads stored in a user-picked SAF folder are streamed back to the
+        // audio element over loopback HTTP, which the WebView treats as mixed
+        // content because the app is served from https://localhost.
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().getSettings()
+                    .setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)

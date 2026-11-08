@@ -5,6 +5,7 @@ import Icon from '@/components/Icon.vue'
 import {
   cancelTask,
   clearCompleted,
+  downloadFolderLabel,
   downloadState,
   downloadSummary,
   removeTask,
@@ -15,6 +16,7 @@ import { playTrack, playTracks } from '@/core/playback/player'
 import { notify } from '@/core/plugin/manager'
 import { qualityLabel } from '@/core/quality'
 import { confirmAction } from '@/core/confirm'
+import { settingsState } from '@/core/settings'
 
 const router = useRouter()
 const summary = computed(() => downloadSummary())
@@ -271,7 +273,12 @@ function completedMeta(task: DownloadTask): string {
         </section>
 
         <p class="foot">
-          文件保存在应用专属目录，只能在本应用内播放；卸载应用或在系统设置中清除数据会一并删除。<br />
+          文件保存在{{ downloadFolderLabel() }}；歌词与封面会以同名 .lrc / .jpg 一起保存。<br />
+          {{
+            settingsState.downloadDirectoryUri
+              ? '卸载应用不会删除这个目录里的文件。'
+              : '卸载应用或在系统设置中清除数据会一并删除这些文件。'
+          }}<br />
           下载中退出应用的任务，下次启动会标记为「上次下载被中断」。
         </p>
       </template>
