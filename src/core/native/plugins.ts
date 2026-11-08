@@ -43,6 +43,17 @@ export interface DownloaderPlugin {
     text: string
     treeUri?: string
   }): Promise<{ fileName: string; path: string; uri: string; size: number }>
+  /** Rewrites the file so the cover and lyrics live inside its own metadata. */
+  embedTags(options: {
+    fileName: string
+    treeUri?: string
+    /** Sidecar image to embed; omit to keep only the text tags. */
+    coverName?: string
+    title?: string
+    artist?: string
+    album?: string
+    lyrics?: string
+  }): Promise<{ tagged: boolean }>
   /** Loopback URL for files the WebView cannot read directly (content://). */
   localUrl(options: { fileName: string; treeUri?: string }): Promise<{ url: string; size: number }>
   chooseDirectory(): Promise<DownloadDirectory>

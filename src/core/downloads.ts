@@ -29,6 +29,8 @@ export interface DownloadTask {
   lyricsFile: string
   coverFile: string
   size: number
+  /** True once the cover/lyrics were embedded into the audio file. */
+  tagged?: boolean
   error: string
   createdAt: number
   blobUrl?: string
@@ -168,6 +170,7 @@ async function writeSidecars(task: DownloadTask): Promise<void> {
   if (!task.fileName || !Capacitor.isNativePlatform()) return
   const base = sidecarBase(task.fileName)
   const treeUri = task.treeUri || ''
+  let lyricsText = ''
   if (settingsState.downloadLyrics && lyricFetcher) {
     try {
       const lines = await lyricFetcher(task.track)
@@ -177,6 +180,7 @@ async function writeSidecars(task: DownloadTask): Promise<void> {
           artist: task.track.artist,
           album: task.track.album
         })
+        lyricsText = text
         const written = await Downloader.writeText({ fileName: `${base}.lrc`, text, treeUri })
         task.lyricsFile = written.fileName
         persist()
@@ -199,6 +203,28 @@ async function writeSidecars(task: DownloadTask): Promise<void> {
       } catch {}
     }
   }
+  await embedTags(task, lyricsText)
+}
+
+/**
+ * Players such as Salt Player ignore sidecar images, so the cover and lyrics are
+ * also written into the audio file itself. Failures are ignored: the downloaded
+ * song and the sidecar files are still usable.
+ */
+async function embedTags(task: DownloadTask, lyrics: string): Promise<void> {
+  try {
+    const result = await Downloader.embedTags({
+      fileName: task.fileName,
+      treeUri: task.treeUri || '',
+      coverName: settingsState.downloadCover ? task.coverFile : '',
+      title: task.track.title ?? '',
+      artist: task.track.artist ?? '',
+      album: task.track.album ?? '',
+      lyrics
+    })
+    task.tagged = Boolean(result?.tagged)
+    persist()
+  } catch {}
 }
 
 function sanitizeFileName(value: string): string {

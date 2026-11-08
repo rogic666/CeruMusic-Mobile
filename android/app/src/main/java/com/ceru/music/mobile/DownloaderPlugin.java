@@ -549,6 +549,120 @@ public class DownloaderPlugin extends Plugin {
         return getContext().getContentResolver().openInputStream(document);
     }
 
+    // ------------------------------------------------------------ tag writing
+
+    /**
+     * Rewrites the downloaded audio file so the cover and lyrics live inside its own
+     * metadata. Players that ignore sidecar files still show them this way.
+     */
+    @PluginMethod
+    public void embedTags(final PluginCall call) {
+        final String fileName = call.getString("fileName");
+        final String treeUri = call.getString("treeUri", "");
+        final String coverName = call.getString("coverName", "");
+        final String title = call.getString("title", "");
+        final String artist = call.getString("artist", "");
+        final String album = call.getString("album", "");
+        final String lyrics = call.getString("lyrics", "");
+        if (fileName == null || fileName.isEmpty()) {
+            call.reject("缺少文件名");
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                boolean tagged = embedInto(fileName, treeUri, coverName, title, artist, album, lyrics);
+                JSObject result = new JSObject();
+                result.put("tagged", tagged);
+                call.resolve(result);
+            } catch (Exception error) {
+                call.reject(messageOf(error));
+            }
+        });
+    }
+
+    private boolean embedInto(String fileName, String treeUri, String coverName, String title,
+                              String artist, String album, String lyrics) throws Exception {
+        String extension = extensionOf(fileName);
+        if (!AudioTagger.supports(extension)) return false;
+        InputStream source = openForRead(treeUri, fileName);
+        if (source == null) return false;
+        byte[] cover = null;
+        if (!coverName.isEmpty()) {
+            InputStream coverStream = openForRead(treeUri, coverName);
+            if (coverStream != null) {
+                try {
+                    cover = readAll(coverStream, 8L * 1024 * 1024);
+                } finally {
+                    coverStream.close();
+                }
+            }
+        }
+        File cache = getContext().getCacheDir();
+        File input = File.createTempFile("ceru-tag-in-", ".tmp", cache);
+        File output = File.createTempFile("ceru-tag-out-", ".tmp", cache);
+        try {
+            try (OutputStream into = new FileOutputStream(input)) {
+                copyStream(source, into);
+            } finally {
+                source.close();
+            }
+            AudioTagger.embed(input, output, extension,
+                    new AudioTagger.Meta(title, artist, album, lyrics, cover));
+            writeBack(fileName, treeUri, output);
+            return true;
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            input.delete();
+            //noinspection ResultOfMethodCallIgnored
+            output.delete();
+        }
+    }
+
+    /** Copies the rewritten file over the original document. */
+    private void writeBack(String fileName, String treeUri, File file) throws Exception {
+        if (treeUri.isEmpty()) {
+            File target = appFile(fileName);
+            try (InputStream in = new FileInputStream(file);
+                 OutputStream out = new FileOutputStream(target, false)) {
+                copyStream(in, out);
+            }
+            return;
+        }
+        Uri document = findChild(Uri.parse(treeUri), fileName);
+        if (document == null) throw new Exception("找不到要写入的文件");
+        try (InputStream in = new FileInputStream(file);
+             OutputStream out = getContext().getContentResolver().openOutputStream(document, "wt")) {
+            if (out == null) throw new Exception("无法写入文件");
+            copyStream(in, out);
+        }
+    }
+
+    private static String extensionOf(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return dot >= 0 ? fileName.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+    }
+
+    private static byte[] readAll(InputStream in, long limit) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] chunk = new byte[16 * 1024];
+        long total = 0;
+        int read;
+        while ((read = in.read(chunk)) > 0) {
+            total += read;
+            if (total > limit) throw new Exception("文件过大");
+            buffer.write(chunk, 0, read);
+        }
+        return buffer.toByteArray();
+    }
+
+    private static void copyStream(InputStream in, OutputStream out) throws Exception {
+        byte[] buffer = new byte[64 * 1024];
+        int read;
+        while ((read = in.read(buffer)) > 0) {
+            out.write(buffer, 0, read);
+        }
+    }
+
     // ----------------------------------------------------------- SAF helpers
 
     private static Uri treeDocument(Uri treeUri) {
