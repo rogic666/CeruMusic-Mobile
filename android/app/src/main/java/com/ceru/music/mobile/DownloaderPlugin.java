@@ -662,7 +662,9 @@ public class DownloaderPlugin extends Plugin {
             case "wav":
                 return "audio/wav";
             case "lrc":
-                return "text/plain";
+                // Must not be a MIME type the provider knows: ExternalStorageProvider
+                // appends the MIME's extension, which turned "x.lrc" into "x.lrc.txt".
+                return "application/x-lrc";
             case "jpg":
             case "jpeg":
                 return "image/jpeg";
