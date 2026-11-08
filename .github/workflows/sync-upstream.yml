@@ -1,8 +1,8 @@
 name: Sync upstream and build
 
+# 只在需要时手动触发（Actions → Sync upstream and build → Run workflow），
+# 上游发新版不会自动合并，避免在你不想要的时候突然变版本。
 on:
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
 
 permissions:
