@@ -234,12 +234,14 @@ public class DownloaderPlugin extends Plugin {
             document = DocumentsContract.createDocument(resolver, parent, mimeTypeFor(name), name);
         }
         if (document == null) throw new Exception("无法在所选目录创建文件");
+        final Uri target = document;
+        final String finalName = name;
         try {
-            long size = perform(id, url, headers, () -> resolver.openOutputStream(document, "w"), job);
-            return new Target(name, null, document, size);
+            long size = perform(id, url, headers, () -> resolver.openOutputStream(target, "w"), job);
+            return new Target(finalName, null, target, size);
         } catch (Exception error) {
             try {
-                DocumentsContract.deleteDocument(resolver, document);
+                DocumentsContract.deleteDocument(resolver, target);
             } catch (Exception ignored) {
             }
             throw error;
