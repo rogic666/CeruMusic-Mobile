@@ -284,7 +284,10 @@ function scrollActiveLyric(): void {
   if (!box) return
   void nextTick(() => {
     const active = box.querySelector<HTMLElement>('.ly-line.cur')
-    if (active) active.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (!active) return
+    // 只滚动歌词容器本身：scrollIntoView 会连带滚动祖先，导致整页跳动
+    const top = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2
+    box.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
   })
 }
 
@@ -362,6 +365,22 @@ onUnmounted(() => {
         歌词来源：{{ playerState.lyricSource }}
       </div>
 
+      <div v-if="settingsState.showLyrics" class="p-lyric" @click="openLyrics">
+        <div class="p-lyric-body">
+          <template v-if="playerState.lyrics.length">
+            <div class="p-lyric-cur">
+              {{ lyricCurrent?.text || '♪' }}
+            </div>
+            <div class="p-lyric-next">
+              {{ playerState.lyrics[playerState.activeLyric + 1]?.text || ' ' }}
+            </div>
+          </template>
+          <div v-else class="p-lyric-cur dim">
+            {{ playerState.lyricsLoading ? '正在加载歌词…' : '暂无歌词 · 点这里在线匹配' }}
+          </div>
+        </div>
+      </div>
+
       <div class="p-seek">
         <input
           class="p-range"
@@ -389,7 +408,7 @@ onUnmounted(() => {
           <Icon name="prev" :size="27" />
         </button>
         <button class="p-play" aria-label="播放或暂停" @click="togglePlay">
-          <span v-if="playerState.loading" class="loading-dots"><i /><i /><i /></span>
+          <span v-if="playerState.loading" class="p-spin" />
           <Icon v-else :name="playerState.playing ? 'pause' : 'play'" :size="27" />
         </button>
         <button class="p-skip" aria-label="下一首" @click="next">
@@ -443,20 +462,6 @@ onUnmounted(() => {
       </div>
       </div>
 
-      <div v-if="settingsState.showLyrics" class="p-lyric" @click="openLyrics">
-        <div class="p-grab" />
-        <template v-if="playerState.lyrics.length">
-          <div class="p-lyric-cur">
-            {{ lyricCurrent?.text || '♪' }}
-          </div>
-          <div class="p-lyric-next truncate">
-            {{ playerState.lyrics[playerState.activeLyric + 1]?.text || ' ' }}
-          </div>
-        </template>
-        <div v-else class="p-lyric-cur dim">
-          {{ playerState.lyricsLoading ? '正在加载歌词…' : '暂无歌词 · 点这里在线匹配' }}
-        </div>
-      </div>
     </div>
 
     <!-- 全屏歌词 -->
@@ -655,6 +660,7 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <div class="ps-body">
         <div class="ps-label">播放速度</div>
         <div class="chip-row wrap">
           <button
@@ -731,10 +737,13 @@ onUnmounted(() => {
           </button>
         </div>
         <p class="ps-hint">{{ sleepLabel }}</p>
+        </div>
 
-        <button class="btn btn-primary btn-block mt16" @click="downloadCurrent">
-          <Icon name="download" :size="17" /> 下载当前歌曲
-        </button>
+        <div class="ps-foot">
+          <button class="btn btn-primary btn-block" @click="downloadCurrent">
+            <Icon name="download" :size="17" /> 下载当前歌曲
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -820,8 +829,8 @@ onUnmounted(() => {
 
 .p-art {
   position: relative;
-  width: min(340px, 80vw, calc(33vh - 6px));
-  height: min(340px, 80vw, calc(33vh - 6px));
+  width: min(360px, 82vw, calc(37vh - 6px));
+  height: min(360px, 82vw, calc(37vh - 6px));
   margin: 0 auto;
   border-radius: 24px;
   flex: none;
@@ -956,7 +965,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: clamp(12px, 2vh, 24px);
+  margin-top: clamp(14px, 2.8vh, 32px);
 }
 .p-aux,
 .p-skip,
@@ -989,6 +998,25 @@ onUnmounted(() => {
   width: 40px;
   height: 40px;
 }
+/* 加载中用旋环，避免和「更多」的三个点混淆 */
+.p-spin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(13, 33, 28, 0.18);
+  border-top-color: #0d211c;
+  animation: p-spin 0.8s linear infinite;
+}
+.p-play.sm .p-spin {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
+}
+@keyframes p-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 .p-play:active {
   transform: scale(0.95);
 }
@@ -1017,7 +1045,7 @@ onUnmounted(() => {
 .p-sub {
   display: flex;
   justify-content: space-between;
-  margin-top: clamp(14px, 2vh, 26px);
+  margin-top: clamp(14px, 2.8vh, 32px);
   padding: 0 2px;
 }
 .p-sub-item {
@@ -1041,9 +1069,52 @@ onUnmounted(() => {
 
 .p-lyric {
   flex: none;
-  margin-top: clamp(14px, 4vh, 44px);
-  padding-top: clamp(8px, 1.4vh, 16px);
+  margin-top: clamp(10px, 2.2vh, 24px);
+  padding: 0 2px;
   text-align: center;
+  cursor: pointer;
+}
+/* 歌词放在歌名下方、进度条上方；行数固定（当前最多 2 行 + 下一句 1 行），
+   长句换行/省略都不会改变页面高度 */
+.p-lyric-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-height: 65px;
+}
+.p-lyric + .p-seek {
+  margin-top: clamp(10px, 2vh, 22px);
+}
+/* 矮屏（≤700px，例如 360×640）收紧节奏，保证整页不溢出 */
+@media (max-height: 700px) {
+  .p-main {
+    padding-top: 8px;
+    padding-bottom: calc(10px + var(--safe-bottom));
+  }
+  .p-art {
+    width: min(280px, 74vw, 30vh);
+    height: min(280px, 74vw, 30vh);
+  }
+  .p-meta {
+    margin-top: 10px;
+  }
+  .p-seek {
+    margin-top: 10px;
+  }
+  .p-ctrl {
+    margin-top: 8px;
+  }
+  .p-sub {
+    margin-top: 8px;
+  }
+  .p-lyric {
+    margin-top: 10px;
+  }
+  .p-lyric-body {
+    min-height: 56px;
+    gap: 1px;
+  }
 }
 /* 队列打开时，压暗层的播放信息会与弹层内容重影，先淡出 */
 .player.q-open .p-bg img {
@@ -1061,27 +1132,29 @@ onUnmounted(() => {
   opacity: 0;
   transition: opacity 0.16s var(--e-out);
 }
-.p-grab {
-  width: 34px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.2);
-  margin: 0 auto 10px;
-}
 .p-lyric-cur {
   font-family: var(--serif);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 15.5px;
+  line-height: 22px;
+  max-height: 44px;
   color: rgba(255, 255, 255, 0.94);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .p-lyric-cur.dim {
   color: rgba(255, 255, 255, 0.5);
   font-size: 13px;
+  line-height: 22px;
 }
 .p-lyric-next {
-  margin-top: 4px;
-  font-size: 12px;
+  font-size: 12.5px;
+  line-height: 18px;
   color: rgba(255, 255, 255, 0.38);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 全屏歌词 */
@@ -1124,42 +1197,49 @@ onUnmounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: safe center;
+  justify-content: flex-start;
   overflow-y: auto;
-  padding: 76px var(--pad) 96px;
+  /* 上留白让当前句落在屏幕上三分之一；下留白够最后一句滚到中部 */
+  padding: clamp(24px, 13vh, 104px) var(--pad) 34vh calc(var(--pad) + 14px);
   scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 78%, transparent 100%);
-  mask-image: linear-gradient(180deg, transparent 0%, #000 12%, #000 78%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 88%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 10%, #000 88%, transparent 100%);
 }
 .ly-box::-webkit-scrollbar {
   display: none;
 }
 .ly-line {
   position: relative;
-  padding: 9px 0 9px 14px;
+  padding: 11px 0;
   font-family: var(--serif);
-  font-size: calc(15px * var(--ly-scale, 1));
+  font-size: calc(15.5px * var(--ly-scale, 1));
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.34);
   text-shadow: 0 1px 14px rgba(0, 0, 0, 0.35);
   transition: color 0.35s var(--e-out), font-size 0.35s var(--e-out);
 }
+.ly-line + .ly-line {
+  margin-top: 10px;
+}
 .ly-line.passed {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.44);
 }
 .ly-line.cur {
-  font-size: calc(20px * var(--ly-scale, 1));
+  padding: 14px 0 15px;
+  margin-top: 16px;
+  font-size: calc(21px * var(--ly-scale, 1));
   color: #f4faf7;
 }
 .ly-line.cur::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 14px;
-  bottom: 14px;
+  left: -14px;
+  top: 50%;
   width: 2px;
+  height: 22px;
+  margin-top: -11px;
   border-radius: 2px;
-  background: #9fd8c4;
+  background: linear-gradient(180deg, #9fd8c4, rgba(159, 216, 196, 0.1));
 }
 .ly-char {
   color: rgba(255, 255, 255, 0.4);
@@ -1173,13 +1253,15 @@ onUnmounted(() => {
 }
 .ly-tr {
   display: block;
-  margin-top: 3px;
+  margin-top: 4px;
   font-family: var(--sans);
-  font-size: calc(11px * var(--ly-scale, 1));
-  color: rgba(255, 255, 255, 0.42);
+  font-size: calc(11.5px * var(--ly-scale, 1));
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.4);
 }
 .ly-line.cur .ly-tr {
-  color: rgba(159, 216, 196, 0.78);
+  margin-top: 6px;
+  color: rgba(159, 216, 196, 0.62);
 }
 .ly-empty {
   padding: 40px 4px;
@@ -1320,25 +1402,43 @@ onUnmounted(() => {
   height: 30px;
 }
 
-/* 播放设置 sheet */
+/* 播放设置 sheet：头固定、中间滚动、下载按钮常驻底部 */
 .ps {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+.ps-body {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding-bottom: calc(26px + var(--safe-bottom));
+  padding-bottom: 6px;
+}
+.ps-foot {
+  flex: none;
+  padding: 10px var(--pad) calc(16px + var(--safe-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--line-2);
 }
 .ps > .ps-label,
 .ps > .ps-hint,
 .ps > .ps-row,
 .ps > .btn-block,
-.ps > .ps-actions {
+.ps > .ps-actions,
+.ps-body > .ps-label,
+.ps-body > .ps-hint,
+.ps-body > .ps-row {
   margin-left: var(--pad);
   margin-right: var(--pad);
 }
-.ps > .chip-row {
+.ps > .chip-row,
+.ps-body > .chip-row {
   padding: 0 var(--pad);
 }
 .ps-label {
