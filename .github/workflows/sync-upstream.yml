@@ -1,0 +1,38 @@
+name: Sync upstream and build
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream main
+        run: |
+          git config user.name "ceru-sync-bot"
+          git config user.email "ceru-sync-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/baipiao5555/CeruMusic-Mobile.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已经是最新，无需同步"
+            exit 0
+          fi
+          if git merge --no-edit upstream/main; then
+            git push origin HEAD:main
+            echo "已同步上游并推送，构建会自动开始"
+          else
+            git merge --abort || true
+            echo "::error::上游更新与本地改动冲突，需要人工处理（找 DSH 里的助手）"
+            exit 1
+          fi
